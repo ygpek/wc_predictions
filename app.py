@@ -250,10 +250,16 @@ def fetch_matches():
         r.raise_for_status()
         data = r.json()
         matches = data.get("matches", [])
+
         # Assign stable IDs
-        for i, m in enumerate(matches):
+        for m in matches:
             m["id"] = f"{m.get('date','')}__{m.get('team1','')}__{m.get('team2','')}"
+
+        # Sort by date (safe parsing)
+        matches.sort(key=lambda m: datetime.fromisoformat(m["date"]))
+
         return matches
+
     except Exception as e:
         st.error(f"Could not fetch match data: {e}")
         return []
