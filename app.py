@@ -173,7 +173,7 @@ SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/a
 
 # ─── Google Sheets helpers ───────────────────────────────────────────────────────
 def get_gspread_client():
-    creds_dict = st.secrets.get("gcp_service_account", None)
+    creds_dict = st.secrets.get("GCP_SERVICE_ACCOUNT", None)
     if creds_dict is None:
         return None
     creds = Credentials.from_service_account_info(dict(creds_dict), scopes=SCOPES)
