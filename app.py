@@ -508,7 +508,7 @@ if st.session_state.page == "matches":
         if not st.session_state.logged_in:
             st.info("Sign in to submit predictions.")
         else:
-            upcoming = [m for m in matches if is_upcoming(m)]
+            upcoming = [m for m in matches if is_upcoming(m) and m["id"] not in user_preds]
 
             if not upcoming:
                 st.info("No upcoming matches to predict.")
