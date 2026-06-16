@@ -388,7 +388,7 @@ if st.session_state.page == "matches":
         fc1, fc2 = st.columns(2)
         with fc1:
             show_filter = st.selectbox(
-                "Show", ["All matches", "Upcoming only", "Completed only"], key="mfilter", value="Upcoming only"
+                "Show", ["All matches", "Upcoming only", "Completed only"], key="mfilter", index=1
             )
         with fc2:
             stage_filter = st.selectbox("Stage", ["All stages", "Group stage", "Knockout stage"], key="sfilter")
