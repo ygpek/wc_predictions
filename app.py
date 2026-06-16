@@ -467,28 +467,39 @@ if st.session_state.page == "matches":
             st.info("Sign in to submit predictions.")
         else:
             upcoming = [m for m in matches if is_upcoming(m)]
+
             if not upcoming:
                 st.info("No upcoming matches to predict.")
             else:
                 match_options = {f"{m['team1']} vs {m['team2']} ({m['date']})": m for m in upcoming}
+
                 chosen_label = st.selectbox("Pick a match", list(match_options.keys()))
                 chosen = match_options[chosen_label]
                 mid = chosen["id"]
 
-                existing = user_preds.get(mid, {})
-                default_home = int(existing.get("pred_home", 0)) if existing else 0
-                default_away = int(existing.get("pred_away", 0)) if existing else 0
+                # 🚫 block if already predicted
+                if mid in user_preds:
+                    st.warning("You already submitted a prediction for this match.")
+                    st.stop()
 
                 st.markdown(f"**{chosen['team1']}** vs **{chosen['team2']}**")
+
                 c1, c2 = st.columns(2)
                 with c1:
-                    ph = st.number_input(chosen["team1"], min_value=0, max_value=20, value=default_home, key="ph")
+                    ph = st.number_input(chosen["team1"], min_value=0, max_value=20, value=0, key=f"ph_{mid}")
                 with c2:
-                    pa = st.number_input(chosen["team2"], min_value=0, max_value=20, value=default_away, key="pa")
+                    pa = st.number_input(chosen["team2"], min_value=0, max_value=20, value=0, key=f"pa_{mid}")
 
-                btn_label = "Update prediction" if mid in user_preds else "Submit prediction"
-                if st.button(btn_label, type="primary"):
-                    save_prediction(preds_ws, st.session_state.username, mid, chosen["team1"], chosen["team2"], ph, pa)
+                if st.button("Submit prediction", type="primary"):
+                    save_prediction(
+                        preds_ws,
+                        st.session_state.username,
+                        mid,
+                        chosen["team1"],
+                        chosen["team2"],
+                        ph,
+                        pa,
+                    )
                     st.success(f"Prediction saved: {chosen['team1']} {ph}–{pa} {chosen['team2']}")
                     st.rerun()
 
