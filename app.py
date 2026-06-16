@@ -5,6 +5,7 @@ import hashlib
 import json
 from datetime import datetime, date
 import gspread
+import os
 from google.oauth2.service_account import Credentials
 
 # ─── Page Config ────────────────────────────────────────────────────────────────
@@ -177,10 +178,14 @@ SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/a
 
 # ─── Google Sheets helpers ───────────────────────────────────────────────────────
 def get_gspread_client():
-    creds_dict = st.secrets.get("GCP_SERVICE_ACCOUNT", None)
-    if creds_dict is None:
-        return None
-    creds = Credentials.from_service_account_info(dict(creds_dict), scopes=SCOPES)
+    service_account_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
+
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+    ]
+
+    creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
+
     return gspread.authorize(creds)
 
 
