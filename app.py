@@ -386,10 +386,10 @@ if st.session_state.page == "matches":
 
         # Filter controls
         fc1, fc2 = st.columns(2)
+        if "mfilter" not in st.session_state:
+            st.session_state["mfilter"] = "Upcoming only"
         with fc1:
-            show_filter = st.selectbox(
-                "Show", ["All matches", "Upcoming only", "Completed only"], key="mfilter", index=1
-            )
+            show_filter = st.selectbox("Show", ["All matches", "Upcoming only", "Completed only"], key="mfilter")
         with fc2:
             stage_filter = st.selectbox("Stage", ["All stages", "Group stage", "Knockout stage"], key="sfilter")
 
