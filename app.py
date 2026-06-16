@@ -16,7 +16,8 @@ st.set_page_config(
 )
 
 # ─── CSS ────────────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(
+    """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600&display=swap');
 
@@ -165,11 +166,14 @@ section[data-testid="stSidebar"] .stButton > button {
     font-weight: 600 !important;
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ─── Constants ──────────────────────────────────────────────────────────────────
 WC_JSON_URL = "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
 
 # ─── Google Sheets helpers ───────────────────────────────────────────────────────
 def get_gspread_client():
@@ -179,30 +183,26 @@ def get_gspread_client():
     creds = Credentials.from_service_account_info(dict(creds_dict), scopes=SCOPES)
     return gspread.authorize(creds)
 
-def get_or_create_sheet(gc, spreadsheet_name="WC2026_Predictions"):
-    try:
-        sh = gc.open(spreadsheet_name)
-    except gspread.SpreadsheetNotFound:
-        sh = gc.create(spreadsheet_name)
-        sh.share(None, perm_type='anyone', role='writer')
-    return sh
 
-def ensure_worksheets(sh):
-    existing = [ws.title for ws in sh.worksheets()]
-    if "Users" not in existing:
-        ws = sh.add_worksheet("Users", rows=500, cols=4)
-        ws.append_row(["username", "password_hash", "created_at", "display_name"])
-    if "Predictions" not in existing:
-        ws = sh.add_worksheet("Predictions", rows=5000, cols=7)
-        ws.append_row(["username", "match_id", "team1", "team2", "pred_home", "pred_away", "submitted_at"])
-    return sh.worksheet("Users"), sh.worksheet("Predictions")
+def get_spreadsheet(gc):
+    spreadsheet_id = st.secrets["SPREADSHEET_ID"]
+    return gc.open_by_key(spreadsheet_id)
+
+
+def get_worksheets(sh):
+    users_ws = sh.worksheet("Users")
+    preds_ws = sh.worksheet("Predictions")
+    return users_ws, preds_ws
+
 
 def hash_password(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
+
 def load_users(users_ws):
     data = users_ws.get_all_records()
     return {row["username"]: row for row in data}
+
 
 def register_user(users_ws, username, password, display_name):
     users = load_users(users_ws)
@@ -210,6 +210,7 @@ def register_user(users_ws, username, password, display_name):
         return False, "Username already taken."
     users_ws.append_row([username, hash_password(password), datetime.utcnow().isoformat(), display_name])
     return True, "Account created!"
+
 
 def login_user(users_ws, username, password):
     users = load_users(users_ws)
@@ -219,8 +220,10 @@ def login_user(users_ws, username, password):
         return False, "Wrong password."
     return True, users[username]["display_name"]
 
+
 def load_predictions(preds_ws):
     return preds_ws.get_all_records()
+
 
 def save_prediction(preds_ws, username, match_id, team1, team2, pred_home, pred_away):
     rows = load_predictions(preds_ws)
@@ -228,11 +231,11 @@ def save_prediction(preds_ws, username, match_id, team1, team2, pred_home, pred_
     for i, row in enumerate(rows):
         if row["username"] == username and row["match_id"] == match_id:
             row_number = i + 2  # 1-indexed + header
-            preds_ws.update(f"E{row_number}:G{row_number}",
-                            [[pred_home, pred_away, datetime.utcnow().isoformat()]])
+            preds_ws.update(f"E{row_number}:G{row_number}", [[pred_home, pred_away, datetime.utcnow().isoformat()]])
             return
     # New prediction
     preds_ws.append_row([username, match_id, team1, team2, pred_home, pred_away, datetime.utcnow().isoformat()])
+
 
 # ─── Match data helpers ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
@@ -250,8 +253,10 @@ def fetch_matches():
         st.error(f"Could not fetch match data: {e}")
         return []
 
+
 def match_has_result(m):
     return bool(m.get("score") and m["score"].get("ft"))
+
 
 def get_result(m):
     if not match_has_result(m):
@@ -259,17 +264,21 @@ def get_result(m):
     ft = m["score"]["ft"]
     return int(ft[0]), int(ft[1])
 
+
 def parse_match_date(m):
     try:
         return date.fromisoformat(m["date"])
     except Exception:
         return date.max
 
+
 def is_upcoming(m):
     return not match_has_result(m) and parse_match_date(m) >= date.today()
 
+
 def is_group_stage(m):
     return "group" in m and m.get("round", "").lower().startswith("matchday")
+
 
 # ─── Session state init ─────────────────────────────────────────────────────────
 for key, default in [("logged_in", False), ("username", ""), ("display_name", ""), ("page", "matches")]:
@@ -290,7 +299,11 @@ with st.sidebar:
     if st.session_state.logged_in:
         st.success(f"👤 {st.session_state.display_name}")
         st.markdown("---")
-        for label, page in [("📅 Matches & Predictions", "matches"), ("🏆 Leaderboard", "leaderboard"), ("👤 My Predictions", "mypreds")]:
+        for label, page in [
+            ("📅 Matches & Predictions", "matches"),
+            ("🏆 Leaderboard", "leaderboard"),
+            ("👤 My Predictions", "mypreds"),
+        ]:
             if st.button(label, key=f"nav_{page}"):
                 st.session_state.page = page
                 st.rerun()
@@ -303,8 +316,8 @@ with st.sidebar:
     else:
         tab = st.radio("", ["Sign in", "Register"], horizontal=True)
         if sheets_ok:
-            sh = get_or_create_sheet(gc)
-            users_ws, preds_ws = ensure_worksheets(sh)
+            sh = get_spreadsheet(gc)
+            users_ws, preds_ws = get_worksheets(sh)
 
             if tab == "Sign in":
                 u = st.text_input("Username", key="login_u")
@@ -337,19 +350,22 @@ with st.sidebar:
             st.rerun()
 
 # ─── Header ─────────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(
+    """
 <div class="wc-header">
   <h1>WORLD CUP 2026</h1>
   <div class="subtitle">Canada · USA · Mexico &nbsp;·&nbsp; June 11 – July 19, 2026</div>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ─── Load data ──────────────────────────────────────────────────────────────────
 matches = fetch_matches()
 
 if gc is not None and st.session_state.logged_in:
-    sh = get_or_create_sheet(gc)
-    users_ws, preds_ws = ensure_worksheets(sh)
+    sh = get_spreadsheet(gc)
+    users_ws, preds_ws = get_worksheets(sh)
     all_predictions = load_predictions(preds_ws)
     user_preds = {r["match_id"]: r for r in all_predictions if r["username"] == st.session_state.username}
 else:
@@ -414,7 +430,8 @@ if st.session_state.page == "matches":
                         if result and int(p["pred_home"]) == result[0] and int(p["pred_away"]) == result[1]:
                             pred_html = f'<span class="badge badge-correct" style="margin-left:0.5rem">✓ {p["pred_home"]}–{p["pred_away"]}</span>'
 
-                    st.markdown(f"""
+                    st.markdown(
+                        f"""
 <div class="match-card">
   <div class="match-meta">
     <span class="badge {stage_badge}">{stage_label}</span>
@@ -424,7 +441,9 @@ if st.session_state.page == "matches":
     {t1} &nbsp;{score_html}&nbsp; {t2}
     {pred_html}
   </div>
-</div>""", unsafe_allow_html=True)
+</div>""",
+                        unsafe_allow_html=True,
+                    )
         else:
             st.info("No match data available right now.")
 
@@ -456,8 +475,7 @@ if st.session_state.page == "matches":
 
                 btn_label = "Update prediction" if mid in user_preds else "Submit prediction"
                 if st.button(btn_label, type="primary"):
-                    save_prediction(preds_ws, st.session_state.username, mid,
-                                    chosen["team1"], chosen["team2"], ph, pa)
+                    save_prediction(preds_ws, st.session_state.username, mid, chosen["team1"], chosen["team2"], ph, pa)
                     st.success(f"Prediction saved: {chosen['team1']} {ph}–{pa} {chosen['team2']}")
                     st.rerun()
 
@@ -499,12 +517,15 @@ elif st.session_state.page == "leaderboard":
                 rank_cls = rank_classes[i] if i < 3 else ""
                 medal = rank_medals[i] if i < 3 else str(i + 1)
                 dname = all_users.get(uname, {}).get("display_name", uname)
-                st.markdown(f"""
+                st.markdown(
+                    f"""
 <div class="lb-row">
   <div class="lb-rank {rank_cls}">{medal}</div>
   <div class="lb-name">{dname}</div>
   <div class="lb-score">{pts}</div>
-</div>""", unsafe_allow_html=True)
+</div>""",
+                    unsafe_allow_html=True,
+                )
 
 # ─── Page: My Predictions ───────────────────────────────────────────────────────
 elif st.session_state.page == "mypreds":
@@ -532,12 +553,14 @@ elif st.session_state.page == "mypreds":
                 status = f"❌ ({match_result[0]}–{match_result[1]})"
                 correct = False
 
-            rows_out.append({
-                "Match": f"{pred['team1']} vs {pred['team2']}",
-                "Your Pick": f"{ph}–{pa}",
-                "Result": f"{match_result[0]}–{match_result[1]}" if match_result else "—",
-                "Status": status,
-            })
+            rows_out.append(
+                {
+                    "Match": f"{pred['team1']} vs {pred['team2']}",
+                    "Your Pick": f"{ph}–{pa}",
+                    "Result": f"{match_result[0]}–{match_result[1]}" if match_result else "—",
+                    "Status": status,
+                }
+            )
 
         df = pd.DataFrame(rows_out)
         st.dataframe(df, use_container_width=True, hide_index=True)
