@@ -226,6 +226,21 @@ def login_user(users_ws, username, password):
     return True, users[username]["display_name"]
 
 
+def change_password(users_ws, username, old_password, new_password):
+    users = users_ws.get_all_records()
+
+    for i, row in enumerate(users):
+        if row["username"] == username:
+            if row["password_hash"] != hash_password(old_password):
+                return False, "Current password is incorrect."
+
+            row_number = i + 2  # header offset
+            users_ws.update_cell(row_number, 2, hash_password(new_password))
+            return True, "Password updated successfully."
+
+    return False, "User not found."
+
+
 def load_predictions(preds_ws):
     return preds_ws.get_all_records()
 
@@ -308,6 +323,32 @@ with st.sidebar:
         st.warning("Add Google Sheets credentials to `.streamlit/secrets.toml` to enable accounts & predictions.")
 
     if st.session_state.logged_in:
+        sh = get_spreadsheet(gc)
+        st.markdown("### 🔐 Account")
+        users_ws, preds_ws = get_worksheets(sh)
+
+        with st.expander("Change password"):
+            old_pw = st.text_input("Current password", type="password", key="old_pw")
+            new_pw = st.text_input("New password", type="password", key="new_pw")
+            confirm_pw = st.text_input("Confirm new password", type="password", key="confirm_pw")
+
+            if st.button("Update password"):
+                if not old_pw or not new_pw:
+                    st.error("Fill in all fields.")
+                elif new_pw != confirm_pw:
+                    st.error("New passwords do not match.")
+                else:
+                    ok, msg = change_password(
+                        users_ws,
+                        st.session_state.username,
+                        old_pw,
+                        new_pw,
+                    )
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
         st.success(f"👤 {st.session_state.display_name}")
         st.markdown("---")
         for label, page in [
