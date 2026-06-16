@@ -271,14 +271,14 @@ def get_result(m):
 
 
 def parse_match_date(m):
-    try:
-        return date.fromisoformat(m["date"])
-    except Exception:
-        return date.max
+    return datetime.fromisoformat(m["date"]).date()
 
 
 def is_upcoming(m):
-    return not match_has_result(m) and parse_match_date(m) >= date.today()
+    try:
+        return (not match_has_result(m)) and parse_match_date(m) >= date.today()
+    except Exception:
+        return False
 
 
 def is_group_stage(m):
