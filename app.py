@@ -355,6 +355,7 @@ with st.sidebar:
             ("📅 Matches & Predictions", "matches"),
             ("🏆 Leaderboard", "leaderboard"),
             ("👤 My Predictions", "mypreds"),
+            ("👥 All Predictions", "allpreds"),
         ]:
             if st.button(label, key=f"nav_{page}"):
                 st.session_state.page = page
@@ -633,3 +634,57 @@ elif st.session_state.page == "mypreds":
         total_correct = sum(1 for r in rows_out if "Exact" in r["Status"])
         total_done = sum(1 for r in rows_out if "Pending" not in r["Status"])
         st.markdown(f"**{total_correct}** exact score(s) out of **{total_done}** completed match(es).")
+
+elif st.session_state.page == "allpreds":
+    st.markdown('<div class="section-title">ALL PREDICTIONS</div>', unsafe_allow_html=True)
+
+    if not all_predictions:
+        st.info("No predictions available yet.")
+    else:
+        users = sorted(set(r["username"] for r in all_predictions))
+
+        # get display names
+        all_users = load_users(users_ws)
+
+        user_labels = {u: all_users.get(u, {}).get("display_name", u) for u in users}
+
+        selected_user = st.selectbox("Select player", options=users, format_func=lambda u: user_labels[u])
+
+        user_data = [r for r in all_predictions if r["username"] == selected_user]
+
+        result_map = {m["id"]: get_result(m) for m in matches}
+
+        rows = []
+        for r in user_data:
+            mid = r["match_id"]
+            match_result = result_map.get(mid)
+
+            ph, pa = int(r["pred_home"]), int(r["pred_away"])
+
+            if match_result is None:
+                status = "⏳ Pending"
+                result_str = "—"
+            elif ph == match_result[0] and pa == match_result[1]:
+                status = "✅ Exact"
+                result_str = f"{match_result[0]}–{match_result[1]}"
+            else:
+                status = "❌ Wrong"
+                result_str = f"{match_result[0]}–{match_result[1]}"
+
+            rows.append(
+                {
+                    "Match": f"{r['team1']} vs {r['team2']}",
+                    "Prediction": f"{ph}–{pa}",
+                    "Result": result_str,
+                    "Status": status,
+                }
+            )
+
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        # quick stats
+        total = len(rows)
+        exact = sum(1 for r in rows if r["Status"] == "✅ Exact")
+
+        st.markdown(f"**{exact} / {total}** exact predictions")
