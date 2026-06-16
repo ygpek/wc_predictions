@@ -200,23 +200,6 @@ def get_worksheets(sh):
     return users_ws, preds_ws
 
 
-@st.cache_data(ttl=120)
-def get_all_data(users_ws, preds_ws):
-    return {
-        "users": users_ws.get_all_records(),
-        "preds": preds_ws.get_all_records(),
-    }
-
-
-gc = get_gspread_client()
-sheets_ok = gc is not None
-sh = get_spreadsheet(gc)
-users_ws, preds_ws = get_worksheets(sh)
-data = get_all_data(users_ws, preds_ws)
-users = data["users"]
-all_predictions = data["preds"]
-
-
 def hash_password(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
@@ -227,7 +210,7 @@ def load_users(users_ws):
 
 
 def register_user(users_ws, username, password, display_name):
-    users = data["users"]
+    users = load_users(users_ws)
     if username in users:
         return False, "Username already taken."
     users_ws.append_row([username, hash_password(password), datetime.utcnow().isoformat(), display_name])
@@ -235,7 +218,7 @@ def register_user(users_ws, username, password, display_name):
 
 
 def login_user(users_ws, username, password):
-    users = data["users"]
+    users = load_users(users_ws)
     if username not in users:
         return False, "Username not found."
     if users[username]["password_hash"] != hash_password(password):
@@ -244,7 +227,7 @@ def login_user(users_ws, username, password):
 
 
 def change_password(users_ws, username, old_password, new_password):
-    users = data["users"]
+    users = users_ws.get_all_records()
 
     for i, row in enumerate(users):
         if row["username"] == username:
@@ -263,7 +246,7 @@ def load_predictions(preds_ws):
 
 
 def save_prediction(preds_ws, username, match_id, team1, team2, pred_home, pred_away):
-    rows = data["preds"]
+    rows = load_predictions(preds_ws)
     # Check if prediction already exists → update by overwriting
     for i, row in enumerate(rows):
         if row["username"] == username and row["match_id"] == match_id:
@@ -436,7 +419,7 @@ matches = fetch_matches()
 if gc is not None and st.session_state.logged_in:
     sh = get_spreadsheet(gc)
     users_ws, preds_ws = get_worksheets(sh)
-    all_predictions = data["preds"]
+    all_predictions = load_predictions(preds_ws)
     user_preds = {r["match_id"]: r for r in all_predictions if r["username"] == st.session_state.username}
 else:
     all_predictions = []
@@ -595,7 +578,7 @@ elif st.session_state.page == "leaderboard":
             rank_classes = ["gold", "silver", "bronze"]
             rank_medals = ["🥇", "🥈", "🥉"]
 
-            all_users = data["users"]
+            all_users = load_users(users_ws)
             for i, (uname, pts) in enumerate(sorted_scores):
                 rank_cls = rank_classes[i] if i < 3 else ""
                 medal = rank_medals[i] if i < 3 else str(i + 1)
@@ -661,7 +644,7 @@ elif st.session_state.page == "allpreds":
         users = sorted(set(r["username"] for r in all_predictions))
 
         # get display names
-        all_users = data["users"]
+        all_users = load_users(users_ws)
 
         user_labels = {u: all_users.get(u, {}).get("display_name", u) for u in users}
 
