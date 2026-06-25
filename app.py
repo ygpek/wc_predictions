@@ -315,10 +315,133 @@ def is_group_stage(m):
     return "group" in m and m.get("round", "").lower().startswith("matchday")
 
 
+def tournament_finished(matches):
+    return bool(matches) and any(match_has_result(m) for m in matches) and not any(is_upcoming(m) for m in matches)
+
+
+def score_outcome(home, away):
+    if home > away:
+        return 1
+    if home < away:
+        return -1
+    return 0
+
+
+def safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def display_name_for(username, users):
+    return users.get(username, {}).get("display_name", username)
+
+
+def build_prediction_results(predictions, matches):
+    match_map = {m["id"]: m for m in matches if match_has_result(m)}
+    rows = []
+
+    for pred in predictions:
+        match = match_map.get(pred.get("match_id"))
+        if not match:
+            continue
+
+        ph = safe_int(pred.get("pred_home"))
+        pa = safe_int(pred.get("pred_away"))
+        result = get_result(match)
+        if ph is None or pa is None or result is None:
+            continue
+
+        rh, ra = result
+        rows.append(
+            {
+                "username": pred.get("username"),
+                "match_id": pred.get("match_id"),
+                "match_label": f"{match.get('team1', pred.get('team1', ''))} vs {match.get('team2', pred.get('team2', ''))}",
+                "date": match.get("date", ""),
+                "team1": match.get("team1", pred.get("team1", "")),
+                "team2": match.get("team2", pred.get("team2", "")),
+                "pred_home": ph,
+                "pred_away": pa,
+                "result_home": rh,
+                "result_away": ra,
+                "exact": ph == rh and pa == ra,
+                "outcome_correct": score_outcome(ph, pa) == score_outcome(rh, ra),
+                "goal_diff_correct": (ph - pa) == (rh - ra),
+                "group_stage": is_group_stage(match),
+            }
+        )
+
+    return rows
+
+
+def count_by(rows, predicate):
+    counts = {}
+    for row in rows:
+        if predicate(row):
+            username = row["username"]
+            counts[username] = counts.get(username, 0) + 1
+    return counts
+
+
+def max_count_items(counts):
+    if not counts:
+        return []
+    best = max(counts.values())
+    if best <= 0:
+        return []
+    return sorted((username, value) for username, value in counts.items() if value == best)
+
+
+def longest_streak(rows, predicate):
+    by_user = {}
+    for row in sorted(rows, key=lambda r: (r["date"], r["match_id"])):
+        by_user.setdefault(row["username"], []).append(row)
+
+    streaks = {}
+    for username, user_rows in by_user.items():
+        current = 0
+        best = 0
+        for row in user_rows:
+            if predicate(row):
+                current += 1
+                best = max(best, current)
+            else:
+                current = 0
+        if best > 0:
+            streaks[username] = best
+    return streaks
+
+
+def summarize_match_exact_hits(rows):
+    by_match = {}
+    for row in rows:
+        by_match.setdefault(row["match_id"], {"label": row["match_label"], "exact_users": set(), "total": 0})
+        by_match[row["match_id"]]["total"] += 1
+        if row["exact"]:
+            by_match[row["match_id"]]["exact_users"].add(row["username"])
+    return by_match
+
+
+def tournament_champion(matches):
+    completed = [m for m in matches if match_has_result(m)]
+    if not completed:
+        return None
+
+    final_match = sorted(completed, key=lambda m: m.get("date", ""))[-1]
+    result = get_result(final_match)
+    if result is None or result[0] == result[1]:
+        return None
+    return final_match.get("team1") if result[0] > result[1] else final_match.get("team2")
+
+
 # ─── Session state init ─────────────────────────────────────────────────────────
 for key, default in [("logged_in", False), ("username", ""), ("display_name", ""), ("page", "matches")]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+matches = fetch_matches()
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -369,6 +492,9 @@ with st.sidebar:
             if st.button(label, key=f"nav_{page}"):
                 st.session_state.page = page
                 st.rerun()
+        if tournament_finished(matches) and st.button("Tournament Summary", key="nav_summary"):
+            st.session_state.page = "summary"
+            st.rerun()
         st.markdown("---")
         if st.button("Sign out"):
             st.session_state.logged_in = False
@@ -423,8 +549,6 @@ st.markdown(
 )
 
 # ─── Load data ──────────────────────────────────────────────────────────────────
-matches = fetch_matches()
-
 if gc is not None and st.session_state.logged_in:
     sh = get_spreadsheet(gc)
     users_ws, preds_ws = get_worksheets(sh)
@@ -699,3 +823,161 @@ elif st.session_state.page == "allpreds":
         exact = sum(1 for r in rows if r["Status"] == "✅ Exact")
 
         st.markdown(f"**{exact} / {total}** exact predictions")
+
+elif st.session_state.page == "summary":
+    st.markdown('<div class="section-title">TOURNAMENT SUMMARY</div>', unsafe_allow_html=True)
+
+    if not tournament_finished(matches):
+        st.info("The tournament summary will appear after there are no upcoming matches left.")
+    elif not all_predictions:
+        st.info("No predictions available for the tournament summary.")
+    else:
+        all_users = load_users(users_ws)
+        result_rows = build_prediction_results(all_predictions, matches)
+
+        if not result_rows:
+            st.info("No completed-match predictions available for the tournament summary.")
+        else:
+            participants = sorted({row["username"] for row in result_rows})
+            exact_counts = count_by(result_rows, lambda r: r["exact"])
+            completed_counts = count_by(result_rows, lambda r: True)
+            standings = sorted(
+                [(username, exact_counts.get(username, 0), completed_counts.get(username, 0)) for username in participants],
+                key=lambda item: (-item[1], item[0]),
+            )
+
+            podium_rows = []
+            for rank, (username, exact, completed) in enumerate(standings[:3], start=1):
+                podium_rows.append(
+                    {
+                        "Rank": rank,
+                        "Player": display_name_for(username, all_users),
+                        "Exact scores": exact,
+                        "Completed predictions": completed,
+                    }
+                )
+
+            st.markdown("### Final top three")
+            st.dataframe(pd.DataFrame(podium_rows), use_container_width=True, hide_index=True)
+
+            st.markdown("### Full final standings")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Rank": rank,
+                            "Player": display_name_for(username, all_users),
+                            "Exact scores": exact,
+                            "Completed predictions": completed,
+                        }
+                        for rank, (username, exact, completed) in enumerate(standings, start=1)
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.markdown("### Notable results")
+
+            def show_award(title, winners, value_label):
+                if not winners:
+                    return
+                names = ", ".join(display_name_for(username, all_users) for username, _ in winners)
+                value = winners[0][1]
+                st.markdown(f"**{title}:** {names} ({value} {value_label})")
+
+            exact_by_date = {}
+            for row in result_rows:
+                if row["exact"]:
+                    key = (row["username"], row["date"])
+                    exact_by_date[key] = exact_by_date.get(key, 0) + 1
+            best_day_counts = {}
+            for (username, _match_date), count in exact_by_date.items():
+                best_day_counts[username] = max(best_day_counts.get(username, 0), count)
+            show_award("Most exact picks in one match day", max_count_items(best_day_counts), "exact picks")
+
+            show_award(
+                "Best group-stage predictor",
+                max_count_items(count_by(result_rows, lambda r: r["group_stage"] and r["exact"])),
+                "exact picks",
+            )
+            show_award(
+                "Best knockout-stage predictor",
+                max_count_items(count_by(result_rows, lambda r: (not r["group_stage"]) and r["exact"])),
+                "exact picks",
+            )
+
+            match_hits = summarize_match_exact_hits(result_rows)
+            matches_with_exact = [
+                (match_id, data)
+                for match_id, data in match_hits.items()
+                if len(data["exact_users"]) > 0
+            ]
+            if matches_with_exact:
+                rare_count = min(len(data["exact_users"]) for _match_id, data in matches_with_exact)
+                rare_matches = [data for _match_id, data in matches_with_exact if len(data["exact_users"]) == rare_count]
+                rare_labels = "; ".join(
+                    f"{data['label']} by {', '.join(display_name_for(username, all_users) for username in sorted(data['exact_users']))}"
+                    for data in rare_matches[:3]
+                )
+                st.markdown(f"**Biggest upset prediction hit:** {rare_labels} ({rare_count} exact hit)")
+
+                easy_count = max(len(data["exact_users"]) for _match_id, data in matches_with_exact)
+                easy_matches = [data for _match_id, data in matches_with_exact if len(data["exact_users"]) == easy_count]
+                easy_labels = "; ".join(data["label"] for data in easy_matches[:3])
+                st.markdown(f"**Easiest match to predict:** {easy_labels} ({easy_count} exact hits)")
+
+            show_award("Most active predictor", max_count_items(completed_counts), "completed predictions")
+
+            accuracy = {}
+            for username in participants:
+                completed = completed_counts.get(username, 0)
+                if completed:
+                    accuracy[username] = round(100 * exact_counts.get(username, 0) / completed, 1)
+            show_award("Highest accuracy", max_count_items(accuracy), "% exact")
+
+            show_award(
+                "Most correct outcomes without exact score",
+                max_count_items(count_by(result_rows, lambda r: r["outcome_correct"] and not r["exact"])),
+                "matches",
+            )
+            show_award(
+                "Most correct goal differences without exact score",
+                max_count_items(count_by(result_rows, lambda r: r["goal_diff_correct"] and not r["exact"])),
+                "matches",
+            )
+
+            show_award(
+                "Longest exact-score streak",
+                max_count_items(longest_streak(result_rows, lambda r: r["exact"])),
+                "matches",
+            )
+            show_award(
+                "Longest outcome streak",
+                max_count_items(longest_streak(result_rows, lambda r: r["outcome_correct"])),
+                "matches",
+            )
+
+            champion = tournament_champion(matches)
+            if champion:
+                champion_rows = [
+                    row
+                    for row in result_rows
+                    if row["team1"] == champion or row["team2"] == champion
+                ]
+                champion_attempts = count_by(champion_rows, lambda r: True)
+                champion_correct = count_by(champion_rows, lambda r: r["outcome_correct"])
+                unlucky = {
+                    username: attempts
+                    for username, attempts in champion_attempts.items()
+                    if attempts > 0 and champion_correct.get(username, 0) == 0
+                }
+                show_award("Unlucky predictor", max_count_items(unlucky), f"missed {champion} outcomes")
+
+            scoreline_counts = {}
+            for row in result_rows:
+                scoreline = f"{row['pred_home']}-{row['pred_away']}"
+                scoreline_counts[scoreline] = scoreline_counts.get(scoreline, 0) + 1
+            if scoreline_counts:
+                favorite_scoreline = sorted(scoreline_counts.items(), key=lambda item: (-item[1], item[0]))[0]
+                st.markdown(f"**Favorite scoreline:** {favorite_scoreline[0]} ({favorite_scoreline[1]} predictions)")
