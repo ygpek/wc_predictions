@@ -492,7 +492,7 @@ with st.sidebar:
             if st.button(label, key=f"nav_{page}"):
                 st.session_state.page = page
                 st.rerun()
-        if tournament_finished(matches) and st.button("Tournament Summary", key="nav_summary"):
+        if st.button("Tournament Summary", key="nav_summary"):
             st.session_state.page = "summary"
             st.rerun()
         st.markdown("---")
@@ -827,9 +827,7 @@ elif st.session_state.page == "allpreds":
 elif st.session_state.page == "summary":
     st.markdown('<div class="section-title">TOURNAMENT SUMMARY</div>', unsafe_allow_html=True)
 
-    if not tournament_finished(matches):
-        st.info("The tournament summary will appear after there are no upcoming matches left.")
-    elif not all_predictions:
+    if not all_predictions:
         st.info("No predictions available for the tournament summary.")
     else:
         all_users = load_users(users_ws)
