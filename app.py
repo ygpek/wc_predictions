@@ -492,7 +492,7 @@ with st.sidebar:
             if st.button(label, key=f"nav_{page}"):
                 st.session_state.page = page
                 st.rerun()
-        if st.button("Tournament Summary", key="nav_summary"):
+        if tournament_finished(matches) and st.button("🏁 Tournament Summary", key="nav_summary"):
             st.session_state.page = "summary"
             st.rerun()
         st.markdown("---")
@@ -827,7 +827,9 @@ elif st.session_state.page == "allpreds":
 elif st.session_state.page == "summary":
     st.markdown('<div class="section-title">TOURNAMENT SUMMARY</div>', unsafe_allow_html=True)
 
-    if not all_predictions:
+    if not tournament_finished(matches):
+        st.info("The tournament summary will appear after there are no upcoming matches left.")
+    elif not all_predictions:
         st.info("No predictions available for the tournament summary.")
     else:
         all_users = load_users(users_ws)
@@ -857,23 +859,6 @@ elif st.session_state.page == "summary":
 
             st.markdown("### Final top three")
             st.dataframe(pd.DataFrame(podium_rows), use_container_width=True, hide_index=True)
-
-            st.markdown("### Full final standings")
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "Rank": rank,
-                            "Player": display_name_for(username, all_users),
-                            "Exact scores": exact,
-                            "Completed predictions": completed,
-                        }
-                        for rank, (username, exact, completed) in enumerate(standings, start=1)
-                    ]
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
 
             st.markdown("### Notable results")
 
@@ -912,14 +897,6 @@ elif st.session_state.page == "summary":
                 if len(data["exact_users"]) > 0
             ]
             if matches_with_exact:
-                rare_count = min(len(data["exact_users"]) for _match_id, data in matches_with_exact)
-                rare_matches = [data for _match_id, data in matches_with_exact if len(data["exact_users"]) == rare_count]
-                rare_labels = "; ".join(
-                    f"{data['label']} by {', '.join(display_name_for(username, all_users) for username in sorted(data['exact_users']))}"
-                    for data in rare_matches[:3]
-                )
-                st.markdown(f"**Biggest upset prediction hit:** {rare_labels} ({rare_count} exact hit)")
-
                 easy_count = max(len(data["exact_users"]) for _match_id, data in matches_with_exact)
                 easy_matches = [data for _match_id, data in matches_with_exact if len(data["exact_users"]) == easy_count]
                 easy_labels = "; ".join(data["label"] for data in easy_matches[:3])
