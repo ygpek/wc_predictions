@@ -177,6 +177,7 @@ SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/a
 
 
 # ─── Google Sheets helpers ───────────────────────────────────────────────────────
+@st.cache_resource
 def get_gspread_client():
     service_account_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
 
@@ -189,14 +190,16 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
-def get_spreadsheet(gc):
+@st.cache_resource
+def get_spreadsheet(_gc):
     spreadsheet_id = st.secrets["SPREADSHEET_ID"]
-    return gc.open_by_key(spreadsheet_id)
+    return _gc.open_by_key(spreadsheet_id)
 
 
-def get_worksheets(sh):
-    users_ws = sh.worksheet("Users")
-    preds_ws = sh.worksheet("Predictions")
+@st.cache_resource
+def get_worksheets(_sh):
+    users_ws = _sh.worksheet("Users")
+    preds_ws = _sh.worksheet("Predictions")
     return users_ws, preds_ws
 
 
@@ -204,8 +207,9 @@ def hash_password(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
 
-def load_users(users_ws):
-    data = users_ws.get_all_records()
+@st.cache_data(ttl=60)
+def load_users(_users_ws):
+    data = _users_ws.get_all_records()
     return {row["username"]: row for row in data}
 
 
@@ -214,6 +218,7 @@ def register_user(users_ws, username, password, display_name):
     if username in users:
         return False, "Username already taken."
     users_ws.append_row([username, hash_password(password), datetime.utcnow().isoformat(), display_name])
+    load_users.clear()
     return True, "Account created!"
 
 
@@ -227,34 +232,38 @@ def login_user(users_ws, username, password):
 
 
 def change_password(users_ws, username, old_password, new_password):
-    users = users_ws.get_all_records()
+    users = load_users(users_ws)
 
-    for i, row in enumerate(users):
+    for i, row in enumerate(users.values()):
         if row["username"] == username:
             if row["password_hash"] != hash_password(old_password):
                 return False, "Current password is incorrect."
 
             row_number = i + 2  # header offset
             users_ws.update_cell(row_number, 2, hash_password(new_password))
+            load_users.clear()
             return True, "Password updated successfully."
 
     return False, "User not found."
 
 
-def load_predictions(preds_ws):
-    return preds_ws.get_all_records()
+@st.cache_data(ttl=60)
+def load_predictions(_preds_ws):
+    return _preds_ws.get_all_records()
 
 
-def save_prediction(preds_ws, username, match_id, team1, team2, pred_home, pred_away):
-    rows = load_predictions(preds_ws)
+def save_prediction(preds_ws, username, match_id, team1, team2, pred_home, pred_away, existing_rows=None):
+    rows = existing_rows if existing_rows is not None else load_predictions(preds_ws)
     # Check if prediction already exists → update by overwriting
     for i, row in enumerate(rows):
         if row["username"] == username and row["match_id"] == match_id:
             row_number = i + 2  # 1-indexed + header
             preds_ws.update(f"E{row_number}:G{row_number}", [[pred_home, pred_away, datetime.utcnow().isoformat()]])
+            load_predictions.clear()
             return
     # New prediction
     preds_ws.append_row([username, match_id, team1, team2, pred_home, pred_away, datetime.utcnow().isoformat()])
+    load_predictions.clear()
 
 
 # ─── Match data helpers ─────────────────────────────────────────────────────────
@@ -518,6 +527,7 @@ if st.session_state.page == "matches":
                 chosen_label = st.selectbox("Pick a match", list(match_options.keys()))
                 chosen = match_options[chosen_label]
                 mid = chosen["id"]
+                existing = user_preds.get(mid)
 
                 # 🚫 block if already predicted
                 if mid in user_preds:
@@ -541,6 +551,7 @@ if st.session_state.page == "matches":
                         chosen["team2"],
                         ph,
                         pa,
+                        existing_rows=all_predictions,
                     )
                     st.success(f"Prediction saved: {chosen['team1']} {ph}–{pa} {chosen['team2']}")
                     st.rerun()
