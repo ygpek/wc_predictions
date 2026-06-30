@@ -290,14 +290,46 @@ def fetch_matches():
 
 
 def match_has_result(m):
-    return bool(m.get("score") and m["score"].get("ft"))
+    score = m.get("score") or {}
+    return bool(score and (score.get("ft") is not None or score.get("et") is not None or score.get("p") is not None))
 
 
 def get_result(m):
-    if not match_has_result(m):
+    score = m.get("score") or {}
+    if not score:
         return None
-    ft = m["score"]["ft"]
-    return int(ft[0]), int(ft[1])
+
+    if score.get("p") is not None:
+        base = score.get("et") or score.get("ft")
+        if not base:
+            return None
+
+        home = safe_int(base[0])
+        away = safe_int(base[1])
+        if home is None or away is None:
+            return None
+
+        p_home = safe_int(score["p"][0])
+        p_away = safe_int(score["p"][1])
+        if p_home is None or p_away is None:
+            return None
+
+        if p_home > p_away:
+            home += 1
+        elif p_home < p_away:
+            away += 1
+        return home, away
+
+    if score.get("et") is not None:
+        et = score.get("et")
+        if et:
+            return int(et[0]), int(et[1])
+
+    ft = score.get("ft")
+    if ft:
+        return int(ft[0]), int(ft[1])
+
+    return None
 
 
 def parse_match_date(m):
