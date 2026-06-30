@@ -11,7 +11,12 @@ def load_helpers():
     module = ast.parse(SOURCE.read_text(encoding="utf-8"))
     namespace = {}
     for node in module.body:
-        if isinstance(node, ast.FunctionDef) and node.name in {"safe_int", "match_has_result", "get_result"}:
+        if isinstance(node, ast.FunctionDef) and node.name in {
+            "safe_int",
+            "match_has_result",
+            "get_result",
+            "summarize_results_for_stage",
+        }:
             exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), namespace)
     return namespace
 
@@ -33,6 +38,18 @@ class ScoreLogicTests(unittest.TestCase):
         self.assertTrue(self.helpers["match_has_result"]({"score": {"et": [1, 0]}}))
         self.assertTrue(self.helpers["match_has_result"]({"score": {"p": [2, 3]}}))
         self.assertFalse(self.helpers["match_has_result"]({"score": {}}))
+
+    def test_summarize_results_for_stage_filters_group_stage_results(self):
+        rows = [
+            {"username": "ana", "exact": True, "outcome_correct": True, "goal_diff_correct": False, "group_stage": True},
+            {"username": "ana", "exact": False, "outcome_correct": True, "goal_diff_correct": True, "group_stage": False},
+            {"username": "bob", "exact": True, "outcome_correct": True, "goal_diff_correct": True, "group_stage": True},
+        ]
+        summary = self.helpers["summarize_results_for_stage"](rows, group_stage=True)
+        self.assertEqual(summary["exact_counts"]["ana"], 1)
+        self.assertEqual(summary["exact_counts"]["bob"], 1)
+        self.assertEqual(summary["completed_counts"]["ana"], 1)
+        self.assertEqual(summary["completed_counts"]["bob"], 1)
 
 
 if __name__ == "__main__":

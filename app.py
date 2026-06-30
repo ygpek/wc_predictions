@@ -351,6 +351,13 @@ def tournament_finished(matches):
     return bool(matches) and any(match_has_result(m) for m in matches) and not any(is_upcoming(m) for m in matches)
 
 
+def group_stage_finished(matches):
+    group_matches = [m for m in matches if is_group_stage(m)]
+    if not group_matches:
+        return False
+    return bool(any(match_has_result(m) for m in group_matches)) and not any(is_upcoming(m) and is_group_stage(m) for m in group_matches)
+
+
 def score_outcome(home, away):
     if home > away:
         return 1
@@ -468,6 +475,34 @@ def tournament_champion(matches):
     return final_match.get("team1") if result[0] > result[1] else final_match.get("team2")
 
 
+def summarize_results_for_stage(rows, group_stage=None):
+    filtered_rows = rows
+    if group_stage is not None:
+        filtered_rows = [row for row in rows if row.get("group_stage") is group_stage]
+
+    participants = sorted({row["username"] for row in filtered_rows})
+
+    exact_counts = {}
+    completed_counts = {}
+    for row in filtered_rows:
+        username = row["username"]
+        completed_counts[username] = completed_counts.get(username, 0) + 1
+        if row.get("exact"):
+            exact_counts[username] = exact_counts.get(username, 0) + 1
+
+    standings = sorted(
+        [(username, exact_counts.get(username, 0), completed_counts.get(username, 0)) for username in participants],
+        key=lambda item: (-item[1], item[0]),
+    )
+    return {
+        "rows": filtered_rows,
+        "participants": participants,
+        "exact_counts": exact_counts,
+        "completed_counts": completed_counts,
+        "standings": standings,
+    }
+
+
 # ─── Session state init ─────────────────────────────────────────────────────────
 for key, default in [("logged_in", False), ("username", ""), ("display_name", ""), ("page", "matches")]:
     if key not in st.session_state:
@@ -524,6 +559,9 @@ with st.sidebar:
             if st.button(label, key=f"nav_{page}"):
                 st.session_state.page = page
                 st.rerun()
+        if group_stage_finished(matches) and st.button("🗂️ Group Stage Summary", key="nav_group_summary"):
+            st.session_state.page = "group_summary"
+            st.rerun()
         if tournament_finished(matches) and st.button("🏁 Tournament Summary", key="nav_summary"):
             st.session_state.page = "summary"
             st.rerun()
@@ -856,6 +894,108 @@ elif st.session_state.page == "allpreds":
 
         st.markdown(f"**{exact} / {total}** exact predictions")
 
+elif st.session_state.page == "group_summary":
+    st.markdown('<div class="section-title">GROUP STAGE SUMMARY</div>', unsafe_allow_html=True)
+
+    if not group_stage_finished(matches):
+        st.info("The group stage summary will appear once the group stage has finished.")
+    elif not all_predictions:
+        st.info("No predictions available for the group stage summary.")
+    else:
+        all_users = load_users(users_ws)
+        result_rows = build_prediction_results(all_predictions, matches)
+        group_rows = [row for row in result_rows if row.get("group_stage")]
+
+        if not group_rows:
+            st.info("No completed group-stage predictions available yet.")
+        else:
+            summary = summarize_results_for_stage(group_rows, group_stage=True)
+            standings = summary["standings"]
+
+            podium_rows = []
+            for rank, (username, exact, completed) in enumerate(standings[:3], start=1):
+                podium_rows.append(
+                    {
+                        "Rank": rank,
+                        "Player": display_name_for(username, all_users),
+                        "Exact scores": exact,
+                        "Completed predictions": completed,
+                    }
+                )
+
+            st.markdown("### Group-stage top three")
+            st.dataframe(pd.DataFrame(podium_rows), use_container_width=True, hide_index=True)
+
+            st.markdown("### Notable results")
+
+            def show_award(title, winners, value_label):
+                if not winners:
+                    return
+                names = ", ".join(display_name_for(username, all_users) for username, _ in winners)
+                value = winners[0][1]
+                st.markdown(f"**{title}:** {names} ({value} {value_label})")
+
+            exact_by_date = {}
+            for row in group_rows:
+                if row["exact"]:
+                    key = (row["username"], row["date"])
+                    exact_by_date[key] = exact_by_date.get(key, 0) + 1
+            best_day_counts = {}
+            for (username, _match_date), count in exact_by_date.items():
+                best_day_counts[username] = max(best_day_counts.get(username, 0), count)
+            show_award("Most exact picks in one match day", max_count_items(best_day_counts), "exact picks")
+
+            show_award("Most active predictor", max_count_items(summary["completed_counts"]), "completed predictions")
+
+            accuracy = {}
+            for username in summary["participants"]:
+                completed = summary["completed_counts"].get(username, 0)
+                if completed:
+                    accuracy[username] = round(100 * summary["exact_counts"].get(username, 0) / completed, 1)
+            show_award("Highest accuracy", max_count_items(accuracy), "% exact")
+
+            show_award(
+                "Most correct outcomes without exact score",
+                max_count_items(count_by(group_rows, lambda r: r["outcome_correct"] and not r["exact"])),
+                "matches",
+            )
+            show_award(
+                "Most correct goal differences without exact score",
+                max_count_items(count_by(group_rows, lambda r: r["goal_diff_correct"] and not r["exact"])),
+                "matches",
+            )
+
+            show_award(
+                "Longest exact-score streak",
+                max_count_items(longest_streak(group_rows, lambda r: r["exact"])),
+                "matches",
+            )
+            show_award(
+                "Longest outcome streak",
+                max_count_items(longest_streak(group_rows, lambda r: r["outcome_correct"])),
+                "matches",
+            )
+
+            match_hits = summarize_match_exact_hits(group_rows)
+            matches_with_exact = [
+                (match_id, data)
+                for match_id, data in match_hits.items()
+                if len(data["exact_users"]) > 0
+            ]
+            if matches_with_exact:
+                easy_count = max(len(data["exact_users"]) for _match_id, data in matches_with_exact)
+                easy_matches = [data for _match_id, data in matches_with_exact if len(data["exact_users"]) == easy_count]
+                easy_labels = "; ".join(data["label"] for data in easy_matches[:3])
+                st.markdown(f"**Easiest match to predict:** {easy_labels} ({easy_count} exact hits)")
+
+            scoreline_counts = {}
+            for row in group_rows:
+                scoreline = f"{row['pred_home']}-{row['pred_away']}"
+                scoreline_counts[scoreline] = scoreline_counts.get(scoreline, 0) + 1
+            if scoreline_counts:
+                favorite_scoreline = sorted(scoreline_counts.items(), key=lambda item: (-item[1], item[0]))[0]
+                st.markdown(f"**Favorite scoreline:** {favorite_scoreline[0]} ({favorite_scoreline[1]} predictions)")
+
 elif st.session_state.page == "summary":
     st.markdown('<div class="section-title">TOURNAMENT SUMMARY</div>', unsafe_allow_html=True)
 
@@ -870,13 +1010,11 @@ elif st.session_state.page == "summary":
         if not result_rows:
             st.info("No completed-match predictions available for the tournament summary.")
         else:
-            participants = sorted({row["username"] for row in result_rows})
-            exact_counts = count_by(result_rows, lambda r: r["exact"])
-            completed_counts = count_by(result_rows, lambda r: True)
-            standings = sorted(
-                [(username, exact_counts.get(username, 0), completed_counts.get(username, 0)) for username in participants],
-                key=lambda item: (-item[1], item[0]),
-            )
+            summary = summarize_results_for_stage(result_rows)
+            participants = summary["participants"]
+            exact_counts = summary["exact_counts"]
+            completed_counts = summary["completed_counts"]
+            standings = summary["standings"]
 
             podium_rows = []
             for rank, (username, exact, completed) in enumerate(standings[:3], start=1):
